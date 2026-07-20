@@ -100,23 +100,6 @@ sudo ./benchmark.sh /path/to/media   # defaults to ~/Videos
 Expected files: `h264_*.264`, `hevc_*.265`, `mjpeg_*.mjpeg`, and a raw
 `nv12_w1920_h1080_*.yuv` (encoder input).
 
-## Verified Results
-
-Tested on SpaceMIT K1 board (Bianbu OS, FFmpeg 8.0.1) with **real 1920x1080
-clips** (decode) and a **real NV12 1080p source** (encode, 120 frames):
-
-| Codec | Decode FPS | Encode FPS |
-|-------|-----------:|-----------:|
-| H.264 | 222 | 132 |
-| HEVC  | 364 | 194 |
-| MJPEG | 228 | 255 |
-
-Decode inputs: `h264_...54f...264`, `hevc_...200f...265`, `mjpeg_...120f...mjpeg`.
-Encode input: `nv12_w1920_h1080_120f...yuv`. All paths confirmed running on the
-hardware `stcodec` codecs.
-
-A smaller 1280x720 synthesized run is also available via `test.sh`.
-
 ## Implementation Notes
 
 - Decoder: `avcodec_find_decoder_by_name()` selects the hardware decoder by a
