@@ -1,0 +1,18 @@
+# Build artifacts
+demo_h264_decode
+demo_mjpeg_decode
+*.o
+*.so
+*.a
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Test outputs
+*.yuv
+*.raw
+output_*.jpg
