@@ -1,8 +1,11 @@
 /*
- * SpaceMIT H.264 Hardware Decoding Demo
+ * SpaceMIT Hardware Video Decoding Demo
  *
- * Demonstrates hardware-accelerated H.264 decoding using h264_stcodec decoder
- * with DRM PRIME zero-copy support.
+ * Generic hardware-accelerated decoder that auto-selects the matching
+ * SpaceMIT stcodec decoder (h264_stcodec / hevc_stcodec / mjpeg_stcodec)
+ * based on the input stream's codec, then measures decode frame rate.
+ *
+ * Usage: hw_decode <input_file> [max_frames]
  */
 
 #include <stdio.h>
@@ -22,10 +25,22 @@ static int64_t get_time_us(void) {
     return (int64_t)tv.tv_sec * 1000000 + tv.tv_usec;
 }
 
-static void print_frame_info(AVFrame *frame, int frame_count) {
+/* Map an FFmpeg codec id to its SpaceMIT hardware decoder name. */
+static const char *stcodec_decoder_name(enum AVCodecID id) {
+    switch (id) {
+        case AV_CODEC_ID_H264:  return "h264_stcodec";
+        case AV_CODEC_ID_HEVC:  return "hevc_stcodec";
+        case AV_CODEC_ID_MJPEG: return "mjpeg_stcodec";
+        default:                return NULL;
+    }
+}
+
+static void print_frame_info(AVFrame *frame, int frame_count, int verbose) {
+    if (!verbose)
+        return;
     printf("Frame %4d: pts=%8ld, format=%s, size=%dx%d",
            frame_count,
-           frame->pts,
+           (long)frame->pts,
            av_get_pix_fmt_name(frame->format),
            frame->width,
            frame->height);
@@ -41,12 +56,14 @@ static void print_frame_info(AVFrame *frame, int frame_count) {
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <input_file> [max_frames]\n", argv[0]);
+        fprintf(stderr, "Supported codecs: H.264, HEVC, MJPEG\n");
         fprintf(stderr, "Example: %s video.mp4 100\n", argv[0]);
         return 1;
     }
 
     const char *input_file = argv[1];
     int max_frames = (argc > 2) ? atoi(argv[2]) : -1;
+    int verbose = 1;  /* per-frame log; set 0 for pure benchmark */
 
     AVFormatContext *fmt_ctx = NULL;
     AVCodecContext *dec_ctx = NULL;
@@ -56,9 +73,8 @@ int main(int argc, char *argv[]) {
     int video_stream_idx = -1;
     int ret = 0;
     int frame_count = 0;
-    int64_t start_time, end_time;
+    int64_t start_time = 0, end_time = 0;
 
-    // Open input file
     ret = avformat_open_input(&fmt_ctx, input_file, NULL, NULL);
     if (ret < 0) {
         fprintf(stderr, "Failed to open input file '%s': %s\n",
@@ -66,21 +82,18 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Find stream info
     ret = avformat_find_stream_info(fmt_ctx, NULL);
     if (ret < 0) {
         fprintf(stderr, "Failed to find stream info: %s\n", av_err2str(ret));
         goto cleanup;
     }
 
-    // Find video stream
     for (unsigned i = 0; i < fmt_ctx->nb_streams; i++) {
         if (fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
             video_stream_idx = i;
             break;
         }
     }
-
     if (video_stream_idx < 0) {
         fprintf(stderr, "No video stream found\n");
         ret = -1;
@@ -89,26 +102,27 @@ int main(int argc, char *argv[]) {
 
     AVCodecParameters *codecpar = fmt_ctx->streams[video_stream_idx]->codecpar;
     printf("Input video: %s, %dx%d, codec=%s\n",
-           input_file,
-           codecpar->width,
-           codecpar->height,
+           input_file, codecpar->width, codecpar->height,
            avcodec_get_name(codecpar->codec_id));
 
-    // Find H.264 hardware decoder
-    decoder = avcodec_find_decoder_by_name("h264_stcodec");
+    /* Select the matching SpaceMIT hardware decoder. */
+    const char *hw_name = stcodec_decoder_name(codecpar->codec_id);
+    if (hw_name)
+        decoder = avcodec_find_decoder_by_name(hw_name);
+
     if (!decoder) {
-        fprintf(stderr, "h264_stcodec decoder not found, trying default h264 decoder\n");
-        decoder = avcodec_find_decoder(AV_CODEC_ID_H264);
+        fprintf(stderr, "%s not available, falling back to software decoder\n",
+                hw_name ? hw_name : "hardware decoder");
+        decoder = avcodec_find_decoder(codecpar->codec_id);
         if (!decoder) {
-            fprintf(stderr, "No H.264 decoder available\n");
+            fprintf(stderr, "No decoder available for this codec\n");
             ret = -1;
             goto cleanup;
         }
     } else {
-        printf("Using hardware decoder: h264_stcodec\n");
+        printf("Using hardware decoder: %s\n", hw_name);
     }
 
-    // Allocate decoder context
     dec_ctx = avcodec_alloc_context3(decoder);
     if (!dec_ctx) {
         fprintf(stderr, "Failed to allocate decoder context\n");
@@ -116,14 +130,12 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
 
-    // Copy codec parameters to context
     ret = avcodec_parameters_to_context(dec_ctx, codecpar);
     if (ret < 0) {
         fprintf(stderr, "Failed to copy codec parameters: %s\n", av_err2str(ret));
         goto cleanup;
     }
 
-    // Open decoder
     ret = avcodec_open2(dec_ctx, decoder, NULL);
     if (ret < 0) {
         fprintf(stderr, "Failed to open decoder: %s\n", av_err2str(ret));
@@ -131,9 +143,8 @@ int main(int argc, char *argv[]) {
     }
 
     printf("Decoder opened successfully\n");
-    printf("Output pixel format: %s\n", av_get_pix_fmt_name(dec_ctx->pix_fmt));
+    printf("Output pixel format: %s\n\n", av_get_pix_fmt_name(dec_ctx->pix_fmt));
 
-    // Allocate packet and frame
     pkt = av_packet_alloc();
     frame = av_frame_alloc();
     if (!pkt || !frame) {
@@ -142,16 +153,14 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
 
-    printf("\nStarting decode...\n");
+    printf("Starting decode...\n");
     start_time = get_time_us();
 
-    // Decode loop
     while (1) {
         ret = av_read_frame(fmt_ctx, pkt);
         if (ret < 0) {
             if (ret == AVERROR_EOF) {
-                // Flush decoder
-                avcodec_send_packet(dec_ctx, NULL);
+                avcodec_send_packet(dec_ctx, NULL);  /* flush */
             } else {
                 fprintf(stderr, "Error reading frame: %s\n", av_err2str(ret));
                 break;
@@ -163,7 +172,6 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        // Send packet to decoder
         if (ret >= 0) {
             ret = avcodec_send_packet(dec_ctx, pkt);
             if (ret < 0) {
@@ -174,54 +182,43 @@ int main(int argc, char *argv[]) {
             av_packet_unref(pkt);
         }
 
-        // Receive decoded frames
         while (1) {
             ret = avcodec_receive_frame(dec_ctx, frame);
-            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
                 break;
-            } else if (ret < 0) {
+            else if (ret < 0) {
                 fprintf(stderr, "Error receiving frame: %s\n", av_err2str(ret));
                 goto cleanup;
             }
 
             frame_count++;
-            print_frame_info(frame, frame_count);
-
+            print_frame_info(frame, frame_count, verbose);
             av_frame_unref(frame);
 
-            if (max_frames > 0 && frame_count >= max_frames) {
+            if (max_frames > 0 && frame_count >= max_frames)
                 goto decode_done;
-            }
         }
 
-        if (ret == AVERROR_EOF) {
+        if (ret == AVERROR_EOF)
             break;
-        }
     }
 
 decode_done:
     end_time = get_time_us();
 
-    // Print statistics
     double elapsed_sec = (end_time - start_time) / 1000000.0;
     printf("\n=== Decode Statistics ===\n");
     printf("Total frames decoded: %d\n", frame_count);
     printf("Elapsed time: %.3f seconds\n", elapsed_sec);
-    if (elapsed_sec > 0) {
+    if (elapsed_sec > 0)
         printf("Average FPS: %.2f\n", frame_count / elapsed_sec);
-    }
     printf("Decoder: %s\n", decoder->name);
     printf("Output format: %s\n", av_get_pix_fmt_name(dec_ctx->pix_fmt));
 
 cleanup:
-    if (frame)
-        av_frame_free(&frame);
-    if (pkt)
-        av_packet_free(&pkt);
-    if (dec_ctx)
-        avcodec_free_context(&dec_ctx);
-    if (fmt_ctx)
-        avformat_close_input(&fmt_ctx);
-
+    if (frame)   av_frame_free(&frame);
+    if (pkt)     av_packet_free(&pkt);
+    if (dec_ctx) avcodec_free_context(&dec_ctx);
+    if (fmt_ctx) avformat_close_input(&fmt_ctx);
     return ret < 0 ? 1 : 0;
 }

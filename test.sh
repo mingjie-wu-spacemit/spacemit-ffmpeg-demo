@@ -1,49 +1,56 @@
 #!/bin/bash
-# Test script for SpaceMIT FFmpeg hardware decoding demos
+# Test script for SpaceMIT FFmpeg hardware encode/decode demos.
+# Exercises H.264, HEVC, and MJPEG for both encoding and decoding,
+# and reports the measured frame rate for each.
 
 set -e
 
-echo "==================================="
-echo "SpaceMIT FFmpeg Hardware Decode Test"
-echo "==================================="
-echo ""
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+DEC="$ROOT/decode/hw_decode"
+ENC="$ROOT/encode/hw_encode"
+WORK="$ROOT/testdata"
+mkdir -p "$WORK"
 
-# Check if running as root or in video group
-if [ "$EUID" -ne 0 ] && ! groups | grep -q video; then
-    echo "WARNING: You may need to run with sudo or add your user to the video group:"
-    echo "  sudo usermod -a -G video \$USER"
-    echo "  # Then log out and log back in"
+WIDTH=1280
+HEIGHT=720
+FRAMES=300
+
+echo "==========================================="
+echo "SpaceMIT FFmpeg Hardware Codec Test"
+echo "  Resolution: ${WIDTH}x${HEIGHT}, ${FRAMES} frames"
+echo "==========================================="
+
+# Build if needed
+[ -x "$DEC" ] || $(cd "$ROOT" && make)
+[ -x "$ENC" ] || $(cd "$ROOT" && make)
+
+run_encode() {
+    local codec=$1 ext=$2
     echo ""
-fi
+    echo "--- ENCODE: $codec ---"
+    "$ENC" "$codec" "$WORK/out_${codec}.${ext}" "$WIDTH" "$HEIGHT" "$FRAMES" \
+        | grep -E "encoder|FPS|frames|Elapsed|Output"
+}
 
-# Generate test videos if they don't exist
-if [ ! -f test_720p.mp4 ]; then
-    echo "Generating H.264 test video (720p, 2 seconds)..."
-    ffmpeg -f lavfi -i testsrc=duration=2:size=1280x720:rate=30 \
-        -c:v libx264 -pix_fmt yuv420p test_720p.mp4 -y -loglevel warning
-    echo "✓ test_720p.mp4 created"
-fi
+run_decode() {
+    local codec=$1 file=$2
+    echo ""
+    echo "--- DECODE: $codec ---"
+    "$DEC" "$file" "$FRAMES" 2>/dev/null \
+        | grep -E "decoder|FPS|frames|Elapsed|format"
+}
 
-if [ ! -f test_mjpeg_420.avi ]; then
-    echo "Generating MJPEG test video (480p, 1 second)..."
-    ffmpeg -f lavfi -i testsrc=duration=1:size=640x480:rate=30 \
-        -c:v mjpeg -pix_fmt yuvj420p -q:v 2 test_mjpeg_420.avi -y -loglevel warning
-    echo "✓ test_mjpeg_420.avi created"
-fi
+# --- Encode tests (produce streams we then decode) ---
+run_encode h264  h264
+run_encode hevc  h265
+run_encode mjpeg mjpeg
 
-echo ""
-echo "==================================="
-echo "Test 1: H.264 Hardware Decoding"
-echo "==================================="
-./demo_h264_decode test_720p.mp4 30
-
-echo ""
-echo "==================================="
-echo "Test 2: MJPEG Hardware Decoding"
-echo "==================================="
-./demo_mjpeg_decode test_mjpeg_420.avi 10
+# --- Decode tests (reuse the encoded elementary streams) ---
+run_decode h264  "$WORK/out_h264.h264"
+run_decode hevc  "$WORK/out_hevc.h265"
+run_decode mjpeg "$WORK/out_mjpeg.mjpeg"
 
 echo ""
-echo "==================================="
-echo "All tests completed successfully!"
-echo "==================================="
+echo "==========================================="
+echo "All encode/decode tests completed."
+echo "==========================================="
