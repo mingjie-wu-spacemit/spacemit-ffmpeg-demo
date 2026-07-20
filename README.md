@@ -14,7 +14,7 @@ This repository contains hardware-accelerated video decoding demos for SpaceMIT 
 
 - SpaceMIT board running Bianbu OS
 - FFmpeg with SpaceMIT hardware decoder support
-- libmpp.so (MPP 2.0) library
+- SpaceMIT MPP library (libspacemit_mpp.so)
 
 ## Demos
 
@@ -104,7 +104,7 @@ This generates test videos and runs both demos.
 
 ## Verified Results
 
-Tested on SpaceMIT K3 board (Bianbu OS, FFmpeg 8.0.1, MPP 2.0):
+Tested on SpaceMIT K3 board (Bianbu OS, FFmpeg 8.0.1):
 
 | Demo | Input | Resolution | Frames | Avg FPS |
 |------|-------|-----------|--------|---------|
@@ -134,11 +134,11 @@ ffmpeg -codecs | grep stcodec
 ```
 
 ### 2. MPP library missing
-**Error**: `libmpp.so.1: cannot open shared object file`
+**Error**: `libspacemit_mpp.so.0: cannot open shared object file`
 
-**Solution**: Install or update MPP library:
+**Solution**: Verify the SpaceMIT MPP library is present and registered:
 ```bash
-sudo cp /path/to/libmpp.so.1.0.0 /usr/lib/
+ls -l /usr/lib/libspacemit_mpp.so*
 sudo ldconfig
 ```
 
