@@ -49,6 +49,12 @@ Decodes MJPEG video or image sequences using hardware acceleration.
 
 ## Building
 
+Install FFmpeg development libraries first:
+```bash
+sudo apt-get install libavcodec-dev libavformat-dev libavutil-dev
+```
+
+Then build:
 ```bash
 make
 ```
@@ -56,6 +62,27 @@ make
 This will compile both demos:
 - `demo_h264_decode`
 - `demo_mjpeg_decode`
+
+## Device Permissions
+
+The hardware decoder accesses `/dev/video*` devices, which require membership in the `video` group:
+
+```bash
+sudo usermod -a -G video $USER
+# Log out and log back in for the change to take effect
+```
+
+Alternatively, run with `sudo`.
+
+## Quick Test
+
+Run the automated test script to verify both decoders:
+```bash
+chmod +x test.sh
+./test.sh
+```
+
+This generates test videos and runs both demos.
 
 ## Example Workflows
 
@@ -73,9 +100,21 @@ This will compile both demos:
 ```bash
 # Decode entire video to measure hardware performance
 ./demo_h264_decode big_buck_bunny_1080p.mp4
-
-# Expected: 400-600 fps on K1 for 1080p content
 ```
+
+## Verified Results
+
+Tested on SpaceMIT K3 board (Bianbu OS, FFmpeg 8.0.1, MPP 2.0):
+
+| Demo | Input | Resolution | Frames | Avg FPS |
+|------|-------|-----------|--------|---------|
+| H.264 | test_720p.mp4 | 1280x720 | 30 | 253 |
+| MJPEG | test_mjpeg_420.avi | 640x480 | 10 | 155 |
+
+Both decoders confirmed using hardware acceleration (`h264_stcodec` / `mjpeg_stcodec`).
+
+> Note: MJPEG hardware decoder requires yuv420p input. yuv444p is not supported —
+> encode with `-pix_fmt yuvj420p`.
 
 ## Implementation Notes
 
