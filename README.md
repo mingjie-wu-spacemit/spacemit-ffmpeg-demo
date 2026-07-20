@@ -1,134 +1,121 @@
-# SpaceMIT FFmpeg Hardware Decoding Demos
+# SpaceMIT FFmpeg Hardware Codec Demos
 
-This repository contains hardware-accelerated video decoding demos for SpaceMIT boards using FFmpeg with the custom `h264_stcodec` and `mjpeg_stcodec` decoders.
+Hardware-accelerated video **encoding and decoding** demos for SpaceMIT boards
+using FFmpeg with the custom `stcodec` codecs. Covers **H.264, HEVC, and MJPEG**.
+
+## Repository Layout
+
+```
+spacemit-ffmpeg-demo/
+├── decode/          # generic hardware decoder
+│   ├── hw_decode.c
+│   └── Makefile
+├── encode/          # generic hardware encoder
+│   ├── hw_encode.c
+│   └── Makefile
+├── Makefile         # builds both
+├── test.sh          # runs all encode/decode combinations, reports FPS
+└── README.md
+```
 
 ## Hardware Support
 
-- **Board**: SpaceMIT K1/M1 series with hardware video decoder
-- **Decoders**: 
-  - H.264 hardware decoder (`h264_stcodec`)
-  - MJPEG hardware decoder (`mjpeg_stcodec`)
-- **Output**: DRM PRIME (zero-copy) or software frames
+- **Board**: SpaceMIT K1/K3 series with hardware video codec
+- **Decoders**: `h264_stcodec`, `hevc_stcodec`, `mjpeg_stcodec`
+- **Encoders**: `h264_stcodec`, `hevc_stcodec`, `mjpeg_stcodec`
+- **Output/Input**: NV12, YUV420P, DRM PRIME (zero-copy), and more
 
 ## Prerequisites
 
 - SpaceMIT board running Bianbu OS
-- FFmpeg with SpaceMIT hardware decoder support
-- SpaceMIT MPP library (libspacemit_mpp.so)
-
-## Demos
-
-### 1. H.264 Hardware Decoding (`demo_h264_decode.c`)
-
-Decodes H.264 video using hardware acceleration and outputs decoded frames.
-
-**Features**:
-- Hardware-accelerated H.264 decoding
-- DRM PRIME zero-copy support
-- Frame-by-frame processing
-- Statistics output (fps, frame count, decode time)
-
-**Usage**:
-```bash
-./demo_h264_decode input.mp4 [output_frames]
-```
-
-### 2. MJPEG Hardware Decoding (`demo_mjpeg_decode.c`)
-
-Decodes MJPEG video or image sequences using hardware acceleration.
-
-**Features**:
-- Hardware-accelerated MJPEG decoding
-- Batch processing support
-- Raw YUV output option
-
-**Usage**:
-```bash
-./demo_mjpeg_decode input.mjpeg [output_frames]
-```
-
-## Building
-
-Install FFmpeg development libraries first:
-```bash
-sudo apt-get install libavcodec-dev libavformat-dev libavutil-dev
-```
-
-Then build:
-```bash
-make
-```
-
-This will compile both demos:
-- `demo_h264_decode`
-- `demo_mjpeg_decode`
+- FFmpeg with SpaceMIT hardware codec support (`ffmpeg -codecs | grep stcodec`)
+- SpaceMIT MPP library (`libspacemit_mpp.so`)
+- Dev libraries to build:
+  ```bash
+  sudo apt-get install libavcodec-dev libavformat-dev libavutil-dev
+  ```
 
 ## Device Permissions
 
-The hardware decoder accesses `/dev/video*` devices, which require membership in the `video` group:
+The hardware codec accesses `/dev/video*`, which requires membership in the
+`video` group (or run with `sudo`):
 
 ```bash
 sudo usermod -a -G video $USER
 # Log out and log back in for the change to take effect
 ```
 
-Alternatively, run with `sudo`.
+## Building
+
+```bash
+make            # builds decode/hw_decode and encode/hw_encode
+```
+
+## Decode Demo (`decode/hw_decode.c`)
+
+Auto-selects the matching `<codec>_stcodec` decoder from the input stream's
+codec id, decodes every frame, and reports the frame rate.
+
+```bash
+./decode/hw_decode <input_file> [max_frames]
+
+# Examples
+./decode/hw_decode video.mp4 300      # H.264/HEVC in a container
+./decode/hw_decode clip.h265          # raw HEVC elementary stream
+./decode/hw_decode motion.mjpeg       # MJPEG stream
+```
+
+## Encode Demo (`encode/hw_encode.c`)
+
+Synthesizes animated NV12 frames in-process, encodes them with the selected
+hardware encoder, writes the elementary stream to disk, and reports the frame
+rate.
+
+```bash
+./encode/hw_encode <h264|hevc|mjpeg> <output_file> [width height frames]
+
+# Examples
+./encode/hw_encode h264  out.h264  1280 720 300
+./encode/hw_encode hevc  out.h265  1920 1080 300
+./encode/hw_encode mjpeg out.mjpeg 1280 720 300
+```
 
 ## Quick Test
 
-Run the automated test script to verify both decoders:
 ```bash
 chmod +x test.sh
-./test.sh
+./test.sh          # or: sudo ./test.sh   (if not in the video group)
 ```
 
-This generates test videos and runs both demos.
-
-## Example Workflows
-
-### Decode H.264 video and save first 100 frames
-```bash
-./demo_h264_decode video.mp4 100
-```
-
-### Decode MJPEG stream
-```bash
-./demo_mjpeg_decode motion.mjpeg
-```
-
-### Performance Testing
-```bash
-# Decode entire video to measure hardware performance
-./demo_h264_decode big_buck_bunny_1080p.mp4
-```
+Runs all three encoders and then decodes the produced streams, printing FPS
+for each.
 
 ## Verified Results
 
-Tested on SpaceMIT K3 board (Bianbu OS, FFmpeg 8.0.1):
+Tested on SpaceMIT K3 board (Bianbu OS, FFmpeg 8.0.1), 1280x720, 300 frames:
 
-| Demo | Input | Resolution | Frames | Avg FPS |
-|------|-------|-----------|--------|---------|
-| H.264 | test_720p.mp4 | 1280x720 | 30 | 253 |
-| MJPEG | test_mjpeg_420.avi | 640x480 | 10 | 155 |
+| Codec | Encode FPS | Decode FPS |
+|-------|-----------:|-----------:|
+| H.264 | 228 | 415 |
+| HEVC  | 291 | 221 |
+| MJPEG | 395 | 253 |
 
-Both decoders confirmed using hardware acceleration (`h264_stcodec` / `mjpeg_stcodec`).
-
-> Note: MJPEG hardware decoder requires yuv420p input. yuv444p is not supported —
-> encode with `-pix_fmt yuvj420p`.
+All paths confirmed running on the hardware `stcodec` codecs.
 
 ## Implementation Notes
 
-- Uses `avcodec_find_decoder_by_name()` to explicitly select hardware decoders
-- Handles DRM PRIME descriptors for zero-copy output
-- Properly manages MPP buffer lifecycle
-- Includes pts (presentation timestamp) handling
+- Decoder: `avcodec_find_decoder_by_name()` selects the hardware decoder by a
+  codec-id → name mapping, with a software fallback.
+- Encoder: uses `AV_PIX_FMT_NV12` input (natively supported by stcodec) and the
+  standard `avcodec_send_frame`/`avcodec_receive_packet` loop.
+- Both report frames, elapsed time, and average FPS.
 
 ## Common Issues
 
-### 1. Decoder not found
-**Error**: `Codec 'h264_stcodec' not found`
+### 1. Codec not found
+**Error**: `h264_stcodec ... not found`
 
-**Solution**: Ensure FFmpeg is built with SpaceMIT decoder support:
+**Solution**: Confirm FFmpeg has the SpaceMIT codecs:
 ```bash
 ffmpeg -codecs | grep stcodec
 ```
@@ -136,25 +123,19 @@ ffmpeg -codecs | grep stcodec
 ### 2. MPP library missing
 **Error**: `libspacemit_mpp.so.0: cannot open shared object file`
 
-**Solution**: Verify the SpaceMIT MPP library is present and registered:
+**Solution**:
 ```bash
 ls -l /usr/lib/libspacemit_mpp.so*
 sudo ldconfig
 ```
 
-### 3. Slow decoding performance
-Check if hardware decoder is actually being used:
-```bash
-# Should show h264_stcodec in use
-./demo_h264_decode video.mp4 2>&1 | grep -i codec
-```
+### 3. Permission denied on /dev/video*
+Add your user to the `video` group (see Device Permissions) or run with `sudo`.
+
+### 4. MJPEG input pixel format
+The MJPEG hardware decoder requires yuv420p input. When producing MJPEG with
+FFmpeg, encode with `-pix_fmt yuvj420p` (yuv444p is not supported).
 
 ## License
 
-MIT License - See LICENSE file for details
-
-## References
-
-- [SpaceMIT MPP Documentation](https://github.com/spacemit)
-- [FFmpeg Documentation](https://ffmpeg.org/documentation.html)
-- SpaceMIT decoder implementation: `libavcodec/stcodecdec.c`
+MIT License - see LICENSE file.

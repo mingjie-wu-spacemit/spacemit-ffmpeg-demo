@@ -1,6 +1,6 @@
 # Build artifacts
-demo_h264_decode
-demo_mjpeg_decode
+decode/hw_decode
+encode/hw_encode
 *.o
 *.so
 *.a
@@ -13,6 +13,11 @@ demo_mjpeg_decode
 .idea/
 
 # Test outputs
+testdata/
 *.yuv
 *.raw
-output_*.jpg
+*.h264
+*.h265
+*.mjpeg
+*.mp4
+*.avi
