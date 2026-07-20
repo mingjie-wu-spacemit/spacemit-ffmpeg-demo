@@ -50,7 +50,7 @@ int main(int argc, char *argv[]) {
 
     AVFormatContext *fmt_ctx = NULL;
     AVCodecContext *dec_ctx = NULL;
-    AVCodec *decoder = NULL;
+    const AVCodec *decoder = NULL;
     AVPacket *pkt = NULL;
     AVFrame *frame = NULL;
     int video_stream_idx = -1;
