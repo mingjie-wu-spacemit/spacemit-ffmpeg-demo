@@ -7,8 +7,10 @@
  * encoder, writes the elementary stream to a file, and measures the encode
  * frame rate.
  *
- * Usage: hw_encode <h264|hevc|mjpeg> <output_file> [width height frames]
- * Example: hw_encode h264 out.h264 1280 720 300
+ * Usage: hw_encode <h264|hevc|mjpeg> <output_file> [width height frames] [raw_nv12_input]
+ * Examples:
+ *   hw_encode h264 out.h264 1280 720 300                 # synthesized frames
+ *   hw_encode h264 out.h264 1920 1080 120 input_nv12.yuv # real NV12 input
  */
 
 #include <stdio.h>
@@ -53,6 +55,24 @@ static void fill_nv12_frame(AVFrame *frame, int frame_index) {
     }
 }
 
+/* Read one planar/interleaved NV12 frame from a raw file into an AVFrame.
+ * NV12 layout: Y plane (w*h) followed by interleaved UV plane (w*h/2).
+ * Returns 0 on success, 1 on clean EOF, -1 on error. */
+static int read_nv12_frame(FILE *in, AVFrame *frame) {
+    int w = frame->width, h = frame->height;
+    /* Y plane, row by row (respects linesize/stride) */
+    for (int y = 0; y < h; y++) {
+        if (fread(frame->data[0] + y * frame->linesize[0], 1, w, in) != (size_t)w)
+            return feof(in) ? 1 : -1;
+    }
+    /* Interleaved UV plane at half height, full width of chroma samples */
+    for (int y = 0; y < h / 2; y++) {
+        if (fread(frame->data[1] + y * frame->linesize[1], 1, w, in) != (size_t)w)
+            return feof(in) ? 1 : -1;
+    }
+    return 0;
+}
+
 static int write_packet(FILE *f, AVPacket *pkt) {
     return fwrite(pkt->data, 1, pkt->size, f) == (size_t)pkt->size ? 0 : -1;
 }
@@ -69,6 +89,7 @@ int main(int argc, char *argv[]) {
     int width  = (argc > 3) ? atoi(argv[3]) : 1280;
     int height = (argc > 4) ? atoi(argv[4]) : 720;
     int frames = (argc > 5) ? atoi(argv[5]) : 300;
+    const char *input_file = (argc > 6) ? argv[6] : NULL;  /* raw NV12 source */
 
     enum AVCodecID codec_id;
     const char *enc_name = stcodec_encoder_name(codec_key, &codec_id);
@@ -82,6 +103,7 @@ int main(int argc, char *argv[]) {
     AVFrame *frame = NULL;
     AVPacket *pkt = NULL;
     FILE *out = NULL;
+    FILE *in = NULL;
     int ret = 0;
     int encoded_count = 0;
     int64_t start_time = 0, end_time = 0;
@@ -93,6 +115,15 @@ int main(int argc, char *argv[]) {
     }
     printf("Using hardware encoder: %s\n", enc_name);
     printf("Resolution: %dx%d, frames: %d\n", width, height, frames);
+    printf("Input: %s\n", input_file ? input_file : "synthesized NV12");
+
+    if (input_file) {
+        in = fopen(input_file, "rb");
+        if (!in) {
+            fprintf(stderr, "Failed to open raw input '%s'\n", input_file);
+            return 1;
+        }
+    }
 
     enc_ctx = avcodec_alloc_context3(encoder);
     if (!enc_ctx) {
@@ -147,7 +178,19 @@ int main(int argc, char *argv[]) {
         if (ret < 0)
             goto cleanup;
 
-        fill_nv12_frame(frame, i);
+        if (in) {
+            int r = read_nv12_frame(in, frame);
+            if (r == 1) {  /* reached end of raw input early */
+                printf("Reached end of input after %d frames\n", i);
+                break;
+            } else if (r < 0) {
+                fprintf(stderr, "Error reading raw NV12 frame %d\n", i);
+                ret = -1;
+                goto cleanup;
+            }
+        } else {
+            fill_nv12_frame(frame, i);
+        }
         frame->pts = i;
 
         ret = avcodec_send_frame(enc_ctx, frame);
@@ -201,6 +244,7 @@ int main(int argc, char *argv[]) {
     printf("Output: %s\n", output_file);
 
 cleanup:
+    if (in)      fclose(in);
     if (out)     fclose(out);
     if (frame)   av_frame_free(&frame);
     if (pkt)     av_packet_free(&pkt);
