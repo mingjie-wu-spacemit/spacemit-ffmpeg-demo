@@ -29,7 +29,6 @@ spacemit-ffmpeg-demo/
 
 - SpaceMIT board running Bianbu OS
 - FFmpeg with SpaceMIT hardware codec support (`ffmpeg -codecs | grep stcodec`)
-- SpaceMIT MPP library (`libspacemit_mpp.so`)
 - Dev libraries to build:
   ```bash
   sudo apt-get install libavcodec-dev libavformat-dev libavutil-dev
@@ -118,19 +117,10 @@ Expected files: `h264_*.264`, `hevc_*.265`, `mjpeg_*.mjpeg`, and a raw
 ffmpeg -codecs | grep stcodec
 ```
 
-### 2. MPP library missing
-**Error**: `libspacemit_mpp.so.0: cannot open shared object file`
-
-**Solution**:
-```bash
-ls -l /usr/lib/libspacemit_mpp.so*
-sudo ldconfig
-```
-
-### 3. Permission denied on /dev/video*
+### 2. Permission denied on /dev/video*
 Add your user to the `video` group (see Device Permissions) or run with `sudo`.
 
-### 4. MJPEG input pixel format
+### 3. MJPEG input pixel format
 The MJPEG hardware decoder requires yuv420p input. When producing MJPEG with
 FFmpeg, encode with `-pix_fmt yuvj420p` (yuv444p is not supported).
 
